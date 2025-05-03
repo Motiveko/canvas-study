@@ -11,7 +11,6 @@ interface Box {
 interface Ball {
   position: Vector;
   velocity: Vector;
-  acceleration: Vector;
   radius: number;
   color: string;
   isDragging: boolean;
@@ -58,21 +57,28 @@ const initCanvas = () => {
 class NormalBall implements Ball {
   private bounciness: number = 0.8;
   public isDragging: boolean = true;
-
+  private mass: number = 1;
+  private area: number;
+  private dragCoefficient: number = 0.47;
+  private airDensity: number = 0.00001;
+  private acceleration: Vector = { x: 0, y: 0 };
+  
   constructor(
     public position: Vector, 
     public velocity: Vector, 
-    public acceleration: Vector, 
     public radius: number, 
     public color: string,
-  ) {}
+  ) {
+    this.area = Math.PI * this.radius * this.radius;
+  }
 
   update(box: Box, deltaTime: number) {
     if(this.isDragging) {
       return;
     }
-
-    this.acceleration.y = GRAVITY;
+    
+    this.acceleration = {x: 0, y: GRAVITY};
+    this.applyDamping();
     this.velocity.y += this.acceleration.y * deltaTime;
     this.position.y += this.velocity.y * deltaTime;
 
@@ -104,6 +110,27 @@ class NormalBall implements Ball {
     }
   }
 
+  private applyDamping() {
+    this.applyAirResistance();
+    this.applyFriction();
+  }
+
+  private applyAirResistance () {
+    // velocity scalar 값을 기반으로 계산
+    // F= 1/2​ρC​Av^2
+    // F : 저항 힘, ρ: 공기 밀도, C: 항력 계수, A: 단면적
+    // 힘의 방향
+    const directionX = this.velocity.x < 0 ? -1 : 1;
+    const directionY = this.velocity.y < 0 ? -1 : 1;
+    const forceX = directionX * 0.5 * this.airDensity * this.dragCoefficient * this.area * Math.pow(this.velocity.x, 2);
+    const forceY = directionY * 0.5 * this.airDensity * this.dragCoefficient * this.area * Math.pow(this.velocity.y, 2);
+    this.acceleration.x -= forceX / this.mass;
+    this.acceleration.y -= forceY / this.mass;
+  }
+
+  private applyFriction() {
+  }
+
   draw(ctx: CanvasRenderingContext2D) {
     ctx.beginPath();
     ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
@@ -120,11 +147,9 @@ function setupBallDragAndThrow(canvas: HTMLCanvasElement, addBall: (ball: Normal
   const handleMouseDown = (e: MouseEvent): void => {
     const position = { x: e.offsetX, y: e.offsetY };
     const velocity = { x: 0, y: 0 };
-    const acceleration = { x: 0, y: GRAVITY };
     const draggingBall = new NormalBall(
       position,
       velocity,
-      acceleration,
       10, "red");
     const isDragging = true;
     const lastMousePosition = { x: e.offsetX, y: e.offsetY };
