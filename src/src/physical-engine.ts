@@ -3,7 +3,7 @@ interface Vector {
   y: number;
 }
 
-type Box = {
+interface Box {
   width: number;
   height: number;
 };
@@ -14,10 +14,37 @@ interface Ball {
   acceleration: Vector;
   radius: number;
   color: string;
+  isDragging: boolean;
   update(box: Box, deltaTime: number): void;
   draw(ctx: CanvasRenderingContext2D): void;
 }
+type DraggingState = {
+  state: "idle"
+  draggingBall: null;
+  isDragging: false;
+  lastMousePosition: null;
+  lastPositionTime: null;
+  lastVelocity: null;
+} | {
+  state: "dragging"
+  draggingBall: Ball;
+  isDragging: true;
+  lastMousePosition: Vector;
+  lastPositionTime: number;
+  lastVelocity: Vector;
+};
 
+const VELOCITY_SCALING_FACTOR = 5;
+const MIN_TIME_DELTA = 11;
+const GRAVITY = 1;
+const IDLE_DRAGGING_STATE: DraggingState = {
+  state: "idle",
+  draggingBall: null,
+  isDragging: false,
+  lastMousePosition: null,
+  lastPositionTime: null,
+  lastVelocity: null,
+};
 
 const initCanvas = () => {
   const canvas = document.createElement("canvas");
@@ -28,10 +55,7 @@ const initCanvas = () => {
   return canvas;
 }
 
-
-const GRAVITY = 1;
-
-class Ball implements Ball {
+class NormalBall implements Ball {
   private bounciness: number = 0.8;
   public isDragging: boolean = true;
 
@@ -42,7 +66,6 @@ class Ball implements Ball {
     public radius: number, 
     public color: string,
   ) {}
-
 
   update(box: Box, deltaTime: number) {
     if(this.isDragging) {
@@ -90,78 +113,90 @@ class Ball implements Ball {
   }
 }
 
-const createPhysicalEngine = () => {
-  const canvas = initCanvas();  
-  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
-  const balls: Ball[] = [];
-
-  // 스와이프?를 통해 새로운 공 추가
-  let draggingBall: Ball | null = null;
-  let isDragging: boolean = false;
-  let lastMousePosition: Vector | null = null;
-  let lastPositionTime: number | null = null;
-  let lastVelocity: Vector | null = null;
+function setupBallDragAndThrow(canvas: HTMLCanvasElement, addBall: (ball: NormalBall) => void) {
+  let draggingState = IDLE_DRAGGING_STATE;
 
   // 공 추가, 마우스 떼거나 canvas에서 벗어나면 공이 움직임
-  canvas.addEventListener("mousedown", (e) => {
-    isDragging = true;
-    lastMousePosition = { x: e.offsetX, y: e.offsetY };
+  const handleMouseDown = (e: MouseEvent): void => {
     const position = { x: e.offsetX, y: e.offsetY };
     const velocity = { x: 0, y: 0 };
-    const acceleration = { x: 0, y: 0 };
-    draggingBall = new Ball(
+    const acceleration = { x: 0, y: GRAVITY };
+    const draggingBall = new NormalBall(
       position,
       velocity,
       acceleration,
       10, "red");
-      balls.push(draggingBall);
-  });
-
-  // mousedown 상태면 공이 커서를 따라다님, 커서 속도를 계산함.
-  canvas.addEventListener("mousemove", (e) => {
-    if(!isDragging) {
-      return;
+    const isDragging = true;
+    const lastMousePosition = { x: e.offsetX, y: e.offsetY };
+    const lastPositionTime = Date.now();
+    draggingState = {
+      state: "dragging",
+      draggingBall,
+      isDragging,
+      lastMousePosition,
+      lastPositionTime,
+      lastVelocity: { x: 0, y: 0 },
     }
-
-    if(lastMousePosition) {
-      const currentTime = Date.now();
-      const timeSinceLastPosition = currentTime - (lastPositionTime || currentTime);
-      const currentPosition = { x: e.offsetX, y: e.offsetY };
-      const delta = 10 / timeSinceLastPosition; // 속도 보정값
-      const velocity = { x: (currentPosition.x - lastMousePosition.x) * delta, y: (currentPosition.y - lastMousePosition.y) * delta };
-      lastVelocity = velocity;
-      lastMousePosition = currentPosition;
-      lastPositionTime = currentTime;
-    }
-
-    if(draggingBall) {
-      draggingBall.position = { x: e.offsetX, y: e.offsetY };
-    }
-  });
-
-  // 마우스 떼면 공 추가됨
-  const handleMouseOut = () => {
-    isDragging = false;
-    if (!draggingBall) {
-      return;
-    }
-
-    if (lastVelocity) {
-      draggingBall.velocity = lastVelocity;
-    }
-
-    draggingBall.isDragging = false;
-    lastMousePosition = null;
-    lastVelocity = null;
-    draggingBall = null;
+    addBall(draggingBall);
   };
 
-  canvas.addEventListener("mouseup", handleMouseOut);
-  canvas.addEventListener("mouseleave", handleMouseOut);
-  let lastTimestamp = 0;
+  // mousedown 상태면 공이 커서를 따라다님, 커서 속도를 계산함.
+  const handleMouseMove = (e: MouseEvent): void => {
+    if (draggingState.state !== "dragging") {
+      return;
+    }
 
+    const currentPosition = { x: e.offsetX, y: e.offsetY };
+
+    if (draggingState.lastMousePosition && draggingState.lastPositionTime) {
+      const currentTime = Date.now();
+      const dx = currentPosition.x - draggingState.lastMousePosition.x;
+      const dy = currentPosition.y - draggingState.lastMousePosition.y;
+      const dt = Math.max(currentTime - draggingState.lastPositionTime, MIN_TIME_DELTA);
+      const velocity = { x: VELOCITY_SCALING_FACTOR * dx / dt, y: VELOCITY_SCALING_FACTOR * dy / dt };
+
+      draggingState.lastVelocity = velocity;
+      draggingState.lastMousePosition = currentPosition;
+      draggingState.lastPositionTime = currentTime;
+    }
+
+    draggingState.draggingBall.position = currentPosition;
+  };
+
+  // 마우스 떼면 공 추가됨
+  const handleDragOut = () => {
+    draggingState.isDragging = false;
+    if (!draggingState.draggingBall) {
+      return;
+    }
+
+    if (draggingState.lastVelocity) {
+      draggingState.draggingBall.velocity = draggingState.lastVelocity;
+    }
+
+    draggingState.draggingBall.isDragging = false;
+    draggingState = IDLE_DRAGGING_STATE;
+  };
+
+  canvas.addEventListener("mousedown", handleMouseDown);
+  canvas.addEventListener("mousemove", handleMouseMove);
+  canvas.addEventListener("mouseup", handleDragOut);
+  canvas.addEventListener("mouseleave", handleDragOut);
+}
+
+const createPhysicalEngine = () => {
+  const canvas = initCanvas();  
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D;
+  const balls: Ball[] = [];
+  const addBall = (ball: Ball) => {
+    balls.push(ball);
+  }
+  setupBallDragAndThrow(canvas, addBall);
+  
+  let lastTimestamp = 0;
   const animate = (timestamp: number) => { 
     // 60fps에서는 16ms 주기로 호출됨. 120ms 등 주사율이 달라지면 프레임 속도가 달라져 공의 속도가 달리지므로 보정값필요함
+    // TODO : 이걸 16으로 나누는게 아니라 delta에 중력이나 각종 상수값을 곱해서 속도를 조절하는 방식이 일반적이라고함
     const deltaTime = (timestamp - lastTimestamp) / 16;
     lastTimestamp = timestamp;
     const box: Box = {
